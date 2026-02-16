@@ -3,16 +3,6 @@ import * as React from 'react'
 import { useEffect, useRef } from 'react'
 import { createNoise2D } from 'simplex-noise'
 
-interface Fiber {
-    baseX: number
-    baseY: number
-    length: number
-    angle: number
-    thickness: number
-    color: string
-    segments: Point[]
-}
-
 interface Point {
     x: number
     y: number
@@ -34,12 +24,12 @@ interface WavesProps {
 
 export function Waves({
     className = "",
-    strokeColor = "#ffffff",
-    backgroundColor = "#000000",
+    strokeColor = "#ffffff",  // White lines
+    backgroundColor = "#000000",  // Black background
     pointerSize = 0.5
 }: WavesProps) {
     const containerRef = useRef<HTMLDivElement>(null)
-    const canvasRef = useRef<HTMLCanvasElement>(null)
+    const svgRef = useRef<SVGSVGElement>(null)
     const mouseRef = useRef({
         x: -10,
         y: 0,
@@ -52,26 +42,22 @@ export function Waves({
         a: 0,
         set: false,
     })
-    const fibersRef = useRef<Fiber[]>([])
+    const pathsRef = useRef<SVGPathElement[]>([])
+    const linesRef = useRef<Point[][]>([])
     const noiseRef = useRef<((x: number, y: number) => number) | null>(null)
     const rafRef = useRef<number | null>(null)
     const boundingRef = useRef<DOMRect | null>(null)
-    const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
 
     // Initialization
     useEffect(() => {
-        if (!containerRef.current || !canvasRef.current) return
-
-        // Get canvas context
-        ctxRef.current = canvasRef.current.getContext('2d', { alpha: false })
-        if (!ctxRef.current) return
+        if (!containerRef.current || !svgRef.current) return
 
         // Initialize noise generator
         noiseRef.current = createNoise2D()
 
-        // Initialize size and fibers
+        // Initialize size and lines
         setSize()
-        setFibers()
+        setLines()
 
         // Bind events
         window.addEventListener('resize', onResize)
@@ -89,35 +75,33 @@ export function Waves({
         }
     }, [])
 
-    // Set Canvas size
+    // Set SVG size
     const setSize = () => {
-        if (!containerRef.current || !canvasRef.current) return
+        if (!containerRef.current || !svgRef.current) return
 
         boundingRef.current = containerRef.current.getBoundingClientRect()
         const { width, height } = boundingRef.current
 
-        // Set canvas size with device pixel ratio for sharp rendering
-        const dpr = window.devicePixelRatio || 1
-        canvasRef.current.width = width * dpr
-        canvasRef.current.height = height * dpr
-        canvasRef.current.style.width = `${width}px`
-        canvasRef.current.style.height = `${height}px`
-
-        if (ctxRef.current) {
-            ctxRef.current.scale(dpr, dpr)
-        }
+        svgRef.current.style.width = `${width}px`
+        svgRef.current.style.height = `${height}px`
     }
 
-    // Setup fibers - create realistic rug fiber effect
-    const setFibers = () => {
-        if (!boundingRef.current) return
+    // Setup lines - create rug fiber effect
+    const setLines = () => {
+        if (!svgRef.current || !boundingRef.current) return
 
         const { width, height } = boundingRef.current
-        fibersRef.current = []
+        linesRef.current = []
 
-        // Denser fiber distribution for realistic rug texture
-        const xGap = 6  // Closer spacing for denser appearance
-        const yGap = 8  // Closer spacing for denser appearance
+        // Clear existing paths
+        pathsRef.current.forEach(path => {
+            path.remove()
+        })
+        pathsRef.current = []
+
+        // Optimized spacing for rug fiber effect
+        const xGap = 10  // Balanced spacing for performance
+        const yGap = 14  // Balanced spacing for performance
 
         const oWidth = width + 100
         const oHeight = height + 100
@@ -128,52 +112,49 @@ export function Waves({
         const xStart = (width - xGap * totalLines) / 2
         const yStart = (height - yGap * totalFibers) / 2
 
-        // Create realistic rug fibers
+        // Create short fiber lines (like rug pile)
         for (let i = 0; i < totalLines; i++) {
             for (let j = 0; j < totalFibers; j++) {
-                const baseX = xStart + xGap * i + (Math.random() - 0.5) * 2
-                const baseY = yStart + yGap * j + (Math.random() - 0.5) * 2
+                // Each fiber is a short line segment
+                const baseX = xStart + xGap * i
+                const baseY = yStart + yGap * j
 
-                // Varied fiber properties for realism
-                const length = 5 + Math.random() * 4  // Varied length
-                const angle = (Math.random() - 0.5) * 0.3  // Slight angle variation
-                const thickness = 2.8 + Math.random() * 1.5  // Varied thickness
+                // Create points for each fiber
+                const fiberLength = 4 + Math.random() * 3  // Longer, varied length
+                const points: Point[] = []
 
-                // More natural orange color variation
-                const colorVariation = Math.floor(Math.random() * 30) - 15
-                const r = Math.min(255, Math.max(0, 210 + colorVariation))
-                const g = Math.min(255, Math.max(0, 80 + colorVariation))
-                const b = Math.min(255, Math.max(0, 3 + colorVariation))
-                const alpha = 0.75 + Math.random() * 0.2  // Opacity variation
-
-                const color = `rgba(${r}, ${g}, ${b}, ${alpha})`
-
-                // Create fiber segments
-                const segments: Point[] = []
-                const numSegments = 4
-
-                for (let k = 0; k < numSegments; k++) {
-                    const segmentY = baseY + k * (length / (numSegments - 1))
-                    const segmentX = baseX + Math.sin(angle) * k * 0.5
-
+                for (let k = 0; k < 4; k++) {
                     const point: Point = {
-                        x: segmentX,
-                        y: segmentY,
+                        x: baseX + (Math.random() - 0.5) * 1,
+                        y: baseY + k * (fiberLength / 2),
                         wave: { x: 0, y: 0 },
                         cursor: { x: 0, y: 0, vx: 0, vy: 0 },
                     }
-                    segments.push(point)
+                    points.push(point)
                 }
 
-                fibersRef.current.push({
-                    baseX,
-                    baseY,
-                    length,
-                    angle,
-                    thickness,
-                    color,
-                    segments,
-                })
+                // Create SVG path for each fiber
+                const path = document.createElementNS(
+                    'http://www.w3.org/2000/svg',
+                    'path'
+                )
+                path.classList.add('fiber')
+                path.setAttribute('fill', 'none')
+
+                // Orange color variation for realistic rug feel (darker shade)
+                const colorVariation = Math.floor(Math.random() * 20) - 10
+                const r = Math.min(255, Math.max(0, 210 + colorVariation))
+                const g = Math.min(255, Math.max(0, 80 + colorVariation))
+                const b = Math.min(255, Math.max(0, 3 + colorVariation))
+
+                path.setAttribute('stroke', `rgb(${r}, ${g}, ${b})`)
+                path.setAttribute('stroke-width', '3.5')
+                path.setAttribute('stroke-linecap', 'round')
+                path.setAttribute('opacity', '0.85')
+
+                svgRef.current.appendChild(path)
+                pathsRef.current.push(path)
+                linesRef.current.push(points)
             }
         }
     }
@@ -181,7 +162,7 @@ export function Waves({
     // Resize handler
     const onResize = () => {
         setSize()
-        setFibers()
+        setLines()
     }
 
     // Mouse handler
@@ -209,6 +190,7 @@ export function Waves({
             mouse.sy = mouse.y
             mouse.lx = mouse.x
             mouse.ly = mouse.y
+
             mouse.set = true
         }
 
@@ -219,24 +201,24 @@ export function Waves({
         }
     }
 
-    // Move fiber segments - realistic rug fiber motion
+    // Move points - rug fiber motion
     const movePoints = (time: number) => {
-        const { current: fibers } = fibersRef
+        const { current: lines } = linesRef
         const { current: mouse } = mouseRef
         const { current: noise } = noiseRef
 
         if (!noise) return
 
-        fibers.forEach((fiber) => {
-            fiber.segments.forEach((p: Point, index: number) => {
+        lines.forEach((points) => {
+            points.forEach((p: Point) => {
                 // Subtle wave movement for natural fiber sway
                 const move = noise(
                     (p.x + time * 0.005) * 0.002,
                     (p.y + time * 0.002) * 0.001
                 ) * 5
 
-                p.wave.x = Math.cos(move + fiber.angle) * 2.5
-                p.wave.y = Math.sin(move) * 1.5
+                p.wave.x = Math.cos(move) * 3  // Very subtle horizontal sway
+                p.wave.y = Math.sin(move) * 2  // Gentle vertical movement
 
                 // Mouse effect - fibers respond to mouse like wind through rug
                 const dx = p.x - mouse.sx
@@ -246,9 +228,9 @@ export function Waves({
 
                 if (d < l) {
                     const s = 1 - d / l
-                    const f = Math.cos(d * 0.002) * s * (index / fiber.segments.length)
+                    const f = Math.cos(d * 0.002) * s
 
-                    // Fibers bend away from mouse cursor (stronger at tips)
+                    // Fibers bend away from mouse cursor
                     p.cursor.vx += Math.cos(mouse.a) * f * l * mouse.vs * 0.0008
                     p.cursor.vy += Math.sin(mouse.a) * f * l * mouse.vs * 0.0008
                 }
@@ -273,57 +255,33 @@ export function Waves({
 
     // Get moved point coordinates
     const moved = (point: Point, withCursorForce = true) => {
-        return {
+        const coords = {
             x: point.x + point.wave.x + (withCursorForce ? point.cursor.x : 0),
             y: point.y + point.wave.y + (withCursorForce ? point.cursor.y : 0),
         }
+
+        return coords
     }
 
-    // Draw fibers on canvas
-    const drawFibers = () => {
-        const ctx = ctxRef.current
-        if (!ctx || !canvasRef.current || !boundingRef.current) return
+    // Draw lines - using line segments
+    const drawLines = () => {
+        const { current: lines } = linesRef
+        const { current: paths } = pathsRef
 
-        const { width, height } = boundingRef.current
+        lines.forEach((points, lIndex) => {
+            if (points.length < 2 || !paths[lIndex]) return;
 
-        // Clear canvas
-        ctx.fillStyle = backgroundColor
-        ctx.fillRect(0, 0, width, height)
+            // First point
+            const firstPoint = moved(points[0], false)
+            let d = `M ${firstPoint.x} ${firstPoint.y}`
 
-        // Draw all fibers
-        fibersRef.current.forEach((fiber) => {
-            if (fiber.segments.length < 2) return
-
-            ctx.strokeStyle = fiber.color
-            ctx.lineWidth = fiber.thickness
-            ctx.lineCap = 'round'
-            ctx.lineJoin = 'round'
-
-            ctx.beginPath()
-
-            // Start at first point (no cursor force on base)
-            const firstPoint = moved(fiber.segments[0], false)
-            ctx.moveTo(firstPoint.x, firstPoint.y)
-
-            // Draw through all segments with smooth curves
-            for (let i = 1; i < fiber.segments.length; i++) {
-                const current = moved(fiber.segments[i])
-
-                if (i === fiber.segments.length - 1) {
-                    // Last segment - draw line
-                    ctx.lineTo(current.x, current.y)
-                } else {
-                    // Middle segments - use quadratic curve for smoothness
-                    const next = moved(fiber.segments[i + 1])
-                    const cpX = current.x
-                    const cpY = current.y
-                    const endX = (current.x + next.x) / 2
-                    const endY = (current.y + next.y) / 2
-                    ctx.quadraticCurveTo(cpX, cpY, endX, endY)
-                }
+            // Connect points with lines
+            for (let i = 1; i < points.length; i++) {
+                const current = moved(points[i])
+                d += `L ${current.x} ${current.y}`
             }
 
-            ctx.stroke()
+            paths[lIndex].setAttribute('d', d)
         })
     }
 
@@ -351,14 +309,14 @@ export function Waves({
         // Mouse angle
         mouse.a = Math.atan2(dy, dx)
 
-        // Update CSS variables
+        // Animation
         if (containerRef.current) {
             containerRef.current.style.setProperty('--x', `${mouse.sx}px`)
             containerRef.current.style.setProperty('--y', `${mouse.sy}px`)
         }
 
         movePoints(time)
-        drawFibers()
+        drawLines()
 
         rafRef.current = requestAnimationFrame(tick)
     }
@@ -381,10 +339,10 @@ export function Waves({
                 '--y': '50%',
             } as React.CSSProperties}
         >
-            <canvas
-                ref={canvasRef}
-                className="block w-full h-full"
-                style={{ imageRendering: 'auto' }}
+            <svg
+                ref={svgRef}
+                className="block w-full h-full js-svg"
+                xmlns="http://www.w3.org/2000/svg"
             />
             <div
                 className="pointer-dot"
