@@ -42,15 +42,14 @@ export function Hero() {
                     </div>
 
                     {/* Tagline */}
-                    <p className="font-[family-name:var(--font-cormorant)] text-lg md:text-xl tracking-wider mb-4 font-normal opacity-90">
-                        Handcrafted Luxury Rugs
-                    </p>
-
-                    <p className="font-[family-name:var(--font-cormorant)] text-sm md:text-base tracking-wide font-normal opacity-80 max-w-2xl mx-auto">
-                        Where artistry meets comfort. Each piece is thoughtfully designed
-                        <br className="hidden md:block" />
-                        to transform your space into a sanctuary.
-                    </p>
+                    <div className="mb-4">
+                        <p className="font-[family-name:var(--font-cormorant)] text-lg md:text-xl tracking-wider font-normal opacity-90 mb-2">
+                            깔지 않는 러그
+                        </p>
+                        <p className="font-[family-name:var(--font-cormorant)] text-lg md:text-xl tracking-wider font-normal opacity-90">
+                            A Rug That Refuses the Floor
+                        </p>
+                    </div>
 
                     {/* CTA Button */}
                     <div className="mt-12">

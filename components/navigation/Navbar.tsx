@@ -1,6 +1,10 @@
 'use client'
+import Link from 'next/link'
+import { useAuth } from '@/context/AuthContext'
 
 export function Navbar() {
+    const { user, loading, signOut } = useAuth()
+
     return (
         <nav className="fixed top-0 left-0 right-0 z-50 bg-black/20 backdrop-blur-sm">
             <div className="max-w-7xl mx-auto px-6 py-6">
@@ -24,8 +28,8 @@ export function Navbar() {
                         </a>
                     </div>
 
-                    {/* Right - Shop Button */}
-                    <div className="flex items-center justify-end flex-1">
+                    {/* Right - Shop + Auth */}
+                    <div className="flex items-center justify-end gap-6 flex-1">
                         <button className="group relative px-6 py-2 overflow-hidden">
                             <span className="relative z-10 text-white tracking-widest text-sm font-light font-[family-name:var(--font-cormorant)] uppercase">
                                 Shop
@@ -47,6 +51,37 @@ export function Navbar() {
                                 />
                             </svg>
                         </button>
+
+                        {!loading && (
+                            user ? (
+                                <div className="flex items-center gap-4">
+                                    {user.user_metadata?.avatar_url ? (
+                                        <img
+                                            src={user.user_metadata.avatar_url}
+                                            alt="profile"
+                                            className="w-7 h-7 rounded-full object-cover opacity-90"
+                                        />
+                                    ) : (
+                                        <span className="font-[family-name:var(--font-cormorant)] text-white text-sm tracking-widest opacity-80">
+                                            {user.email?.split('@')[0]}
+                                        </span>
+                                    )}
+                                    <button
+                                        onClick={signOut}
+                                        className="font-[family-name:var(--font-cormorant)] text-white text-sm tracking-widest uppercase hover:opacity-70 transition-opacity"
+                                    >
+                                        Logout
+                                    </button>
+                                </div>
+                            ) : (
+                                <Link
+                                    href="/auth"
+                                    className="font-[family-name:var(--font-cormorant)] text-white text-sm tracking-widest uppercase hover:opacity-70 transition-opacity"
+                                >
+                                    Login
+                                </Link>
+                            )
+                        )}
                     </div>
                 </div>
             </div>

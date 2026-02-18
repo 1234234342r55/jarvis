@@ -6,23 +6,20 @@ import { createNoise2D } from 'simplex-noise'
 interface Fiber {
     baseX: number
     baseY: number
-    length: number
     angle: number
-    thickness: number
-    color: string
-    segments: Point[]
+    length: number
+    colorIndex: number
+    segments: FiberSegment[]
 }
 
-interface Point {
+interface FiberSegment {
     x: number
     y: number
+    offsetX: number
+    offsetY: number
+    weight: number          // 0 = root (anchored), 1 = tip (freely moves)
     wave: { x: number; y: number }
-    cursor: {
-        x: number
-        y: number
-        vx: number
-        vy: number
-    }
+    cursor: { x: number; y: number; vx: number; vy: number }
 }
 
 interface WavesProps {
@@ -30,6 +27,49 @@ interface WavesProps {
     strokeColor?: string
     backgroundColor?: string
     pointerSize?: number
+}
+
+const PRESET_COLORS = [
+    'rgba(200, 68, 0, 0.9)',
+    'rgba(204, 72, 0, 0.88)',
+    'rgba(208, 76, 2, 0.86)',
+    'rgba(212, 80, 4, 0.85)',
+    'rgba(216, 84, 6, 0.84)',
+    'rgba(220, 88, 10, 0.83)',
+    'rgba(224, 92, 14, 0.82)',
+]
+
+class SpatialGrid {
+    private cellSize: number
+    private grid: Map<string, number[]>
+
+    constructor(cellSize: number) {
+        this.cellSize = cellSize
+        this.grid = new Map()
+    }
+
+    clear() { this.grid.clear() }
+
+    add(index: number, x: number, y: number) {
+        const key = `${Math.floor(x / this.cellSize)},${Math.floor(y / this.cellSize)}`
+        if (!this.grid.has(key)) this.grid.set(key, [])
+        this.grid.get(key)!.push(index)
+    }
+
+    getNearby(x: number, y: number, radius: number): number[] {
+        const result: number[] = []
+        const minCX = Math.floor((x - radius) / this.cellSize)
+        const maxCX = Math.floor((x + radius) / this.cellSize)
+        const minCY = Math.floor((y - radius) / this.cellSize)
+        const maxCY = Math.floor((y + radius) / this.cellSize)
+        for (let cx = minCX; cx <= maxCX; cx++) {
+            for (let cy = minCY; cy <= maxCY; cy++) {
+                const indices = this.grid.get(`${cx},${cy}`)
+                if (indices) result.push(...indices)
+            }
+        }
+        return result
+    }
 }
 
 export function Waves({
@@ -40,318 +80,227 @@ export function Waves({
 }: WavesProps) {
     const containerRef = useRef<HTMLDivElement>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
-    const mouseRef = useRef({
-        x: -10,
-        y: 0,
-        lx: 0,
-        ly: 0,
-        sx: 0,
-        sy: 0,
-        v: 0,
-        vs: 0,
-        a: 0,
-        set: false,
-    })
+    const mouseRef = useRef({ x: -999, y: -999, lx: 0, ly: 0, sx: 0, sy: 0, v: 0, vs: 0, a: 0, set: false, dx: 0, dy: 0 })
     const fibersRef = useRef<Fiber[]>([])
     const noiseRef = useRef<((x: number, y: number) => number) | null>(null)
     const rafRef = useRef<number | null>(null)
     const boundingRef = useRef<DOMRect | null>(null)
     const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
+    const dprRef = useRef<number>(1)
+    const spatialGridRef = useRef<SpatialGrid>(new SpatialGrid(120))
+    const colorBatchesRef = useRef<number[][]>([])
 
-    // Initialization
-    useEffect(() => {
-        if (!containerRef.current || !canvasRef.current) return
-
-        // Get canvas context
-        ctxRef.current = canvasRef.current.getContext('2d', { alpha: false })
-        if (!ctxRef.current) return
-
-        // Initialize noise generator
-        noiseRef.current = createNoise2D()
-
-        // Initialize size and fibers
-        setSize()
-        setFibers()
-
-        // Bind events
-        window.addEventListener('resize', onResize)
-        window.addEventListener('mousemove', onMouseMove)
-        containerRef.current.addEventListener('touchmove', onTouchMove, { passive: false })
-
-        // Start animation
-        rafRef.current = requestAnimationFrame(tick)
-
-        return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current)
-            window.removeEventListener('resize', onResize)
-            window.removeEventListener('mousemove', onMouseMove)
-            containerRef.current?.removeEventListener('touchmove', onTouchMove)
-        }
-    }, [])
-
-    // Set Canvas size
     const setSize = () => {
         if (!containerRef.current || !canvasRef.current) return
-
         boundingRef.current = containerRef.current.getBoundingClientRect()
         const { width, height } = boundingRef.current
-
-        // Set canvas size with device pixel ratio for sharp rendering
-        const dpr = window.devicePixelRatio || 1
+        const dpr = dprRef.current
         canvasRef.current.width = width * dpr
         canvasRef.current.height = height * dpr
         canvasRef.current.style.width = `${width}px`
         canvasRef.current.style.height = `${height}px`
-
-        if (ctxRef.current) {
-            ctxRef.current.scale(dpr, dpr)
-        }
+        if (ctxRef.current) ctxRef.current.scale(dpr, dpr)
     }
 
-    // Setup fibers - create realistic rug fiber effect
     const setFibers = () => {
         if (!boundingRef.current) return
-
         const { width, height } = boundingRef.current
         fibersRef.current = []
 
-        // Denser fiber distribution for realistic rug texture
-        const xGap = 6  // Closer spacing for denser appearance
-        const yGap = 8  // Closer spacing for denser appearance
-
+        const xGap = 11          // 가로 간격: 촘촘한 털
+        const yGap = 14          // 세로 간격
+        const SEGMENTS = 6       // 세그먼트 수: 더 부드러운 곡선
         const oWidth = width + 100
         const oHeight = height + 100
-
         const totalLines = Math.ceil(oWidth / xGap)
         const totalFibers = Math.ceil(oHeight / yGap)
-
         const xStart = (width - xGap * totalLines) / 2
         const yStart = (height - yGap * totalFibers) / 2
 
-        // Create realistic rug fibers
+        const grid = spatialGridRef.current
+        grid.clear()
+
+        const batches: number[][] = PRESET_COLORS.map(() => [])
+
         for (let i = 0; i < totalLines; i++) {
             for (let j = 0; j < totalFibers; j++) {
-                const baseX = xStart + xGap * i + (Math.random() - 0.5) * 2
-                const baseY = yStart + yGap * j + (Math.random() - 0.5) * 2
+                const baseX = xStart + xGap * i
+                const baseY = yStart + yGap * j
 
-                // Varied fiber properties for realism
-                const length = 5 + Math.random() * 4  // Varied length
-                const angle = (Math.random() - 0.5) * 0.3  // Slight angle variation
-                const thickness = 2.8 + Math.random() * 1.5  // Varied thickness
+                // 털 길이: yGap보다 길어서 겹쳐 보여야 풍성함
+                const length = 18 + Math.random() * 10
+                // 자연스러운 누운 방향 (약간 랜덤)
+                const angle = (Math.random() - 0.5) * 0.35
+                const colorIndex = Math.floor(Math.random() * PRESET_COLORS.length)
 
-                // More natural orange color variation
-                const colorVariation = Math.floor(Math.random() * 30) - 15
-                const r = Math.min(255, Math.max(0, 210 + colorVariation))
-                const g = Math.min(255, Math.max(0, 80 + colorVariation))
-                const b = Math.min(255, Math.max(0, 3 + colorVariation))
-                const alpha = 0.75 + Math.random() * 0.2  // Opacity variation
-
-                const color = `rgba(${r}, ${g}, ${b}, ${alpha})`
-
-                // Create fiber segments
-                const segments: Point[] = []
-                const numSegments = 4
-
-                for (let k = 0; k < numSegments; k++) {
-                    const segmentY = baseY + k * (length / (numSegments - 1))
-                    const segmentX = baseX + Math.sin(angle) * k * 0.5
-
-                    const point: Point = {
-                        x: segmentX,
-                        y: segmentY,
+                const segments: FiberSegment[] = []
+                for (let k = 0; k < SEGMENTS; k++) {
+                    // weight: 0 = 뿌리 (고정), 1 = 끝 (자유롭게 이동)
+                    const weight = k / (SEGMENTS - 1)
+                    segments.push({
+                        x: baseX,
+                        y: baseY,
+                        offsetX: Math.sin(angle) * (length / (SEGMENTS - 1)) * k,
+                        offsetY: Math.cos(angle) * (length / (SEGMENTS - 1)) * k,
+                        weight,
                         wave: { x: 0, y: 0 },
                         cursor: { x: 0, y: 0, vx: 0, vy: 0 },
-                    }
-                    segments.push(point)
+                    })
                 }
 
-                fibersRef.current.push({
-                    baseX,
-                    baseY,
-                    length,
-                    angle,
-                    thickness,
-                    color,
-                    segments,
-                })
+                const fiberIndex = fibersRef.current.length
+                fibersRef.current.push({ baseX, baseY, angle, length, colorIndex, segments })
+
+                grid.add(fiberIndex, baseX, baseY)
+                batches[colorIndex].push(fiberIndex)
             }
         }
+
+        colorBatchesRef.current = batches
     }
 
-    // Resize handler
-    const onResize = () => {
-        setSize()
-        setFibers()
-    }
-
-    // Mouse handler
-    const onMouseMove = (e: MouseEvent) => {
-        updateMousePosition(e.pageX, e.pageY)
-    }
-
-    // Touch handler
+    const onResize = () => { setSize(); setFibers() }
+    const onMouseMove = (e: MouseEvent) => updateMousePosition(e.pageX, e.pageY)
     const onTouchMove = (e: TouchEvent) => {
         e.preventDefault()
-        const touch = e.touches[0]
-        updateMousePosition(touch.clientX, touch.clientY)
+        const t = e.touches[0]
+        updateMousePosition(t.clientX, t.clientY)
     }
 
-    // Update mouse position
     const updateMousePosition = (x: number, y: number) => {
         if (!boundingRef.current) return
-
         const mouse = mouseRef.current
         mouse.x = x - boundingRef.current.left
         mouse.y = y - boundingRef.current.top + window.scrollY
-
         if (!mouse.set) {
-            mouse.sx = mouse.x
-            mouse.sy = mouse.y
-            mouse.lx = mouse.x
-            mouse.ly = mouse.y
+            mouse.sx = mouse.x; mouse.sy = mouse.y
+            mouse.lx = mouse.x; mouse.ly = mouse.y
             mouse.set = true
         }
-
-        // Update CSS variables
         if (containerRef.current) {
             containerRef.current.style.setProperty('--x', `${mouse.sx}px`)
             containerRef.current.style.setProperty('--y', `${mouse.sy}px`)
         }
     }
 
-    // Move fiber segments - realistic rug fiber motion
     const movePoints = (time: number) => {
-        const { current: fibers } = fibersRef
-        const { current: mouse } = mouseRef
-        const { current: noise } = noiseRef
-
+        const fibers = fibersRef.current
+        const mouse = mouseRef.current
+        const noise = noiseRef.current
         if (!noise) return
 
-        fibers.forEach((fiber) => {
-            fiber.segments.forEach((p: Point, index: number) => {
-                // Subtle wave movement for natural fiber sway
+        const influenceRadius = Math.max(100, mouse.vs * 1.2)
+
+        // 실제 마우스 위치로 그리드 조회 (스무딩 위치 말고)
+        // → 이동 방향 앞의 털들도 정확히 감지
+        const nearbySet = mouse.set
+            ? new Set(spatialGridRef.current.getNearby(mouse.x, mouse.y, influenceRadius))
+            : new Set<number>()
+
+        fibers.forEach((fiber, fiberIndex) => {
+            const isNearby = nearbySet.has(fiberIndex)
+            fiber.segments.forEach((seg) => {
+                const px = seg.x + seg.offsetX
+                const py = seg.y + seg.offsetY
+                const w = seg.weight  // 0=뿌리, 1=끝
+
+                // 잔잔한 주변 흔들림 (뿌리에선 거의 없음, 끝에서만 살짝)
                 const move = noise(
-                    (p.x + time * 0.005) * 0.002,
-                    (p.y + time * 0.002) * 0.001
-                ) * 5
+                    (px + time * 0.003) * 0.0025,
+                    (py + time * 0.0015) * 0.0015
+                ) * 2
+                seg.wave.x = Math.cos(move + fiber.angle) * 0.8 * w
+                seg.wave.y = Math.sin(move) * 0.5 * w
 
-                p.wave.x = Math.cos(move + fiber.angle) * 2.5
-                p.wave.y = Math.sin(move) * 1.5
-
-                // Mouse effect - fibers respond to mouse like wind through rug
-                const dx = p.x - mouse.sx
-                const dy = p.y - mouse.sy
-                const d = Math.hypot(dx, dy)
-                const l = Math.max(120, mouse.vs)
-
-                if (d < l) {
-                    const s = 1 - d / l
-                    const f = Math.cos(d * 0.002) * s * (index / fiber.segments.length)
-
-                    // Fibers bend away from mouse cursor (stronger at tips)
-                    p.cursor.vx += Math.cos(mouse.a) * f * l * mouse.vs * 0.0008
-                    p.cursor.vy += Math.sin(mouse.a) * f * l * mouse.vs * 0.0008
+                // 마우스 힘: cos/sin 각도 분해 대신 델타값 직접 사용
+                // → 오른쪽/왼쪽/위/아래 모든 방향 동일하게 작동
+                if (isNearby && w > 0) {
+                    const fdx = px - mouse.x
+                    const fdy = py - mouse.y
+                    const d = Math.hypot(fdx, fdy)
+                    if (d < influenceRadius) {
+                        const s = 1 - d / influenceRadius
+                        const f = s * s
+                        seg.cursor.vx += mouse.dx * f * 0.28
+                        seg.cursor.vy += mouse.dy * f * 0.28
+                    }
                 }
 
-                // Spring back to original position
-                p.cursor.vx += (0 - p.cursor.x) * 0.02
-                p.cursor.vy += (0 - p.cursor.y) * 0.02
+                // 스프링 복원
+                seg.cursor.vx += (0 - seg.cursor.x) * 0.045
+                seg.cursor.vy += (0 - seg.cursor.y) * 0.045
 
-                // Damping for realistic fiber behavior
-                p.cursor.vx *= 0.92
-                p.cursor.vy *= 0.92
+                // 댐핑
+                seg.cursor.vx *= 0.76
+                seg.cursor.vy *= 0.76
 
-                p.cursor.x += p.cursor.vx
-                p.cursor.y += p.cursor.vy
+                seg.cursor.x += seg.cursor.vx
+                seg.cursor.y += seg.cursor.vy
 
-                // Limit fiber bending
-                p.cursor.x = Math.min(30, Math.max(-30, p.cursor.x))
-                p.cursor.y = Math.min(30, Math.max(-30, p.cursor.y))
+                // 최대 변위 제한
+                const maxDisplace = 25 * w
+                seg.cursor.x = Math.min(maxDisplace, Math.max(-maxDisplace, seg.cursor.x))
+                seg.cursor.y = Math.min(maxDisplace, Math.max(-maxDisplace, seg.cursor.y))
             })
         })
     }
 
-    // Get moved point coordinates
-    const moved = (point: Point, withCursorForce = true) => {
-        return {
-            x: point.x + point.wave.x + (withCursorForce ? point.cursor.x : 0),
-            y: point.y + point.wave.y + (withCursorForce ? point.cursor.y : 0),
-        }
-    }
+    const getFinalPos = (seg: FiberSegment, withCursor = true) => ({
+        x: seg.x + seg.offsetX + seg.wave.x + (withCursor ? seg.cursor.x * seg.weight : 0),
+        y: seg.y + seg.offsetY + seg.wave.y + (withCursor ? seg.cursor.y * seg.weight : 0),
+    })
 
-    // Draw fibers on canvas
     const drawFibers = () => {
         const ctx = ctxRef.current
-        if (!ctx || !canvasRef.current || !boundingRef.current) return
-
+        if (!ctx || !boundingRef.current) return
         const { width, height } = boundingRef.current
+        const fibers = fibersRef.current
 
-        // Clear canvas
         ctx.fillStyle = backgroundColor
         ctx.fillRect(0, 0, width, height)
 
-        // Draw all fibers
-        fibersRef.current.forEach((fiber) => {
-            if (fiber.segments.length < 2) return
+        // 얇은 선: 털처럼 보이려면 1~1.5px
+        ctx.lineWidth = 1.3
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
 
-            ctx.strokeStyle = fiber.color
-            ctx.lineWidth = fiber.thickness
-            ctx.lineCap = 'round'
-            ctx.lineJoin = 'round'
-
+        colorBatchesRef.current.forEach((indices, colorIndex) => {
+            if (indices.length === 0) return
+            ctx.strokeStyle = PRESET_COLORS[colorIndex]
             ctx.beginPath()
 
-            // Start at first point (no cursor force on base)
-            const firstPoint = moved(fiber.segments[0], false)
-            ctx.moveTo(firstPoint.x, firstPoint.y)
-
-            // Draw through all segments with smooth curves
-            for (let i = 1; i < fiber.segments.length; i++) {
-                const current = moved(fiber.segments[i])
-
-                if (i === fiber.segments.length - 1) {
-                    // Last segment - draw line
-                    ctx.lineTo(current.x, current.y)
-                } else {
-                    // Middle segments - use quadratic curve for smoothness
-                    const next = moved(fiber.segments[i + 1])
-                    const cpX = current.x
-                    const cpY = current.y
-                    const endX = (current.x + next.x) / 2
-                    const endY = (current.y + next.y) / 2
-                    ctx.quadraticCurveTo(cpX, cpY, endX, endY)
+            indices.forEach((fiberIndex) => {
+                const fiber = fibers[fiberIndex]
+                if (fiber.segments.length < 2) return
+                // 뿌리 세그먼트는 cursor 영향 없음 (고정)
+                const first = getFinalPos(fiber.segments[0], false)
+                ctx.moveTo(first.x, first.y)
+                for (let i = 1; i < fiber.segments.length; i++) {
+                    const p = getFinalPos(fiber.segments[i])
+                    ctx.lineTo(p.x, p.y)
                 }
-            }
+            })
 
             ctx.stroke()
         })
     }
 
-    // Animation logic
     const tick = (time: number) => {
-        const { current: mouse } = mouseRef
+        const mouse = mouseRef.current
+        mouse.sx += (mouse.x - mouse.sx) * 0.15
+        mouse.sy += (mouse.y - mouse.sy) * 0.15
 
-        // Smooth mouse movement
-        mouse.sx += (mouse.x - mouse.sx) * 0.1
-        mouse.sy += (mouse.y - mouse.sy) * 0.1
-
-        // Mouse velocity
         const dx = mouse.x - mouse.lx
         const dy = mouse.y - mouse.ly
-        const d = Math.hypot(dx, dy)
-
-        mouse.v = d
-        mouse.vs += (d - mouse.vs) * 0.1
-        mouse.vs = Math.min(100, mouse.vs)
-
-        // Previous mouse position
+        mouse.dx = dx   // 직접 델타 저장 (부호 보존: 오른쪽=양수, 왼쪽=음수)
+        mouse.dy = dy
+        mouse.v = Math.hypot(dx, dy)
+        mouse.vs += (mouse.v - mouse.vs) * 0.15
+        mouse.vs = Math.min(80, mouse.vs)
         mouse.lx = mouse.x
         mouse.ly = mouse.y
-
-        // Mouse angle
         mouse.a = Math.atan2(dy, dx)
 
-        // Update CSS variables
         if (containerRef.current) {
             containerRef.current.style.setProperty('--x', `${mouse.sx}px`)
             containerRef.current.style.setProperty('--y', `${mouse.sy}px`)
@@ -359,9 +308,36 @@ export function Waves({
 
         movePoints(time)
         drawFibers()
-
         rafRef.current = requestAnimationFrame(tick)
     }
+
+    useEffect(() => {
+        if (!containerRef.current || !canvasRef.current) return
+        const container = containerRef.current
+        const canvas = canvasRef.current
+
+        const ctx = canvas.getContext('2d', { alpha: false })
+        if (!ctx) return
+
+        ctxRef.current = ctx
+        dprRef.current = Math.min(window.devicePixelRatio || 1, 2)
+        noiseRef.current = createNoise2D()
+
+        setSize()
+        setFibers()
+
+        window.addEventListener('resize', onResize)
+        window.addEventListener('mousemove', onMouseMove)
+        container.addEventListener('touchmove', onTouchMove, { passive: false })
+        rafRef.current = requestAnimationFrame(tick)
+
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current)
+            window.removeEventListener('resize', onResize)
+            window.removeEventListener('mousemove', onMouseMove)
+            container.removeEventListener('touchmove', onTouchMove)
+        }
+    }, [])
 
     return (
         <div
@@ -370,28 +346,21 @@ export function Waves({
             style={{
                 backgroundColor,
                 position: 'absolute',
-                top: 0,
-                left: 0,
-                margin: 0,
-                padding: 0,
-                width: '100%',
-                height: '100%',
+                top: 0, left: 0,
+                margin: 0, padding: 0,
+                width: '100%', height: '100%',
                 overflow: 'hidden',
+                zIndex: 0,
                 '--x': '-0.5rem',
                 '--y': '50%',
             } as React.CSSProperties}
         >
-            <canvas
-                ref={canvasRef}
-                className="block w-full h-full"
-                style={{ imageRendering: 'auto' }}
-            />
+            <canvas ref={canvasRef} className="block w-full h-full" />
             <div
                 className="pointer-dot"
                 style={{
                     position: 'absolute',
-                    top: 0,
-                    left: 0,
+                    top: 0, left: 0,
                     width: `${pointerSize}rem`,
                     height: `${pointerSize}rem`,
                     background: strokeColor,
