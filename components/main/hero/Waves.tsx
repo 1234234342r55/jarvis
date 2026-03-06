@@ -29,15 +29,29 @@ interface WavesProps {
     pointerSize?: number
 }
 
-const PRESET_COLORS = [
-    'rgba(200, 68, 0, 0.9)',
-    'rgba(204, 72, 0, 0.88)',
-    'rgba(208, 76, 2, 0.86)',
-    'rgba(212, 80, 4, 0.85)',
-    'rgba(216, 84, 6, 0.84)',
-    'rgba(220, 88, 10, 0.83)',
-    'rgba(224, 92, 14, 0.82)',
-]
+// Convert hex to rgb
+const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 232, g: 93, b: 4 }
+}
+
+// Generate color variations based on strokeColor
+const generateColors = (strokeColor: string): string[] => {
+    const { r, g, b } = hexToRgb(strokeColor)
+    return [
+        `rgba(${r}, ${g}, ${b}, 0.9)`,
+        `rgba(${r}, ${g}, ${b}, 0.88)`,
+        `rgba(${r}, ${g}, ${b}, 0.86)`,
+        `rgba(${r}, ${g}, ${b}, 0.85)`,
+        `rgba(${r}, ${g}, ${b}, 0.84)`,
+        `rgba(${r}, ${g}, ${b}, 0.83)`,
+        `rgba(${r}, ${g}, ${b}, 0.82)`,
+    ]
+}
 
 class SpatialGrid {
     private cellSize: number
@@ -89,6 +103,16 @@ export function Waves({
     const dprRef = useRef<number>(1)
     const spatialGridRef = useRef<SpatialGrid>(new SpatialGrid(120))
     const colorBatchesRef = useRef<number[][]>([])
+    const colorsRef = useRef<string[]>(generateColors(strokeColor))
+
+    // Update colors when strokeColor changes
+    React.useEffect(() => {
+        colorsRef.current = generateColors(strokeColor)
+        // Regenerate fibers with new colors
+        if (boundingRef.current) {
+            setFibers()
+        }
+    }, [strokeColor])
 
     const setSize = () => {
         if (!containerRef.current || !canvasRef.current) return
@@ -120,7 +144,8 @@ export function Waves({
         const grid = spatialGridRef.current
         grid.clear()
 
-        const batches: number[][] = PRESET_COLORS.map(() => [])
+        const colors = colorsRef.current
+        const batches: number[][] = colors.map(() => [])
 
         for (let i = 0; i < totalLines; i++) {
             for (let j = 0; j < totalFibers; j++) {
@@ -131,7 +156,7 @@ export function Waves({
                 const length = 18 + Math.random() * 10
                 // 자연스러운 누운 방향 (약간 랜덤)
                 const angle = (Math.random() - 0.5) * 0.35
-                const colorIndex = Math.floor(Math.random() * PRESET_COLORS.length)
+                const colorIndex = Math.floor(Math.random() * colors.length)
 
                 const segments: FiberSegment[] = []
                 for (let k = 0; k < SEGMENTS; k++) {
@@ -264,9 +289,10 @@ export function Waves({
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
 
+        const colors = colorsRef.current
         colorBatchesRef.current.forEach((indices, colorIndex) => {
             if (indices.length === 0) return
-            ctx.strokeStyle = PRESET_COLORS[colorIndex]
+            ctx.strokeStyle = colors[colorIndex]
             ctx.beginPath()
 
             indices.forEach((fiberIndex) => {

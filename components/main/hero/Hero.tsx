@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { Waves } from './Waves'
 
 export function Hero() {
@@ -44,36 +45,38 @@ export function Hero() {
                     {/* Tagline */}
                     <div className="mb-4">
                         <p className="font-[family-name:var(--font-cormorant)] text-lg md:text-xl tracking-wider font-normal opacity-90 mb-2">
-                            깔지 않는 러그
+                            자리를 만드는 러그
                         </p>
                         <p className="font-[family-name:var(--font-cormorant)] text-lg md:text-xl tracking-wider font-normal opacity-90">
-                            A Rug That Refuses the Floor
+                            A Rug That Creates Space
                         </p>
                     </div>
 
                     {/* CTA Button */}
                     <div className="mt-12">
-                        <button className="group relative px-8 py-3 overflow-hidden">
-                            <span className="relative z-10 text-white tracking-widest text-sm font-light font-[family-name:var(--font-cormorant)]">
-                                EXPLORE COLLECTION
-                            </span>
-                            <svg
-                                className="absolute inset-0 w-full h-full"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
-                                <rect
-                                    x="0"
-                                    y="0"
-                                    width="100%"
-                                    height="100%"
-                                    fill="none"
-                                    stroke="white"
-                                    strokeWidth="1"
-                                    opacity="0.6"
-                                    className="group-hover:opacity-100 transition-opacity"
-                                />
-                            </svg>
-                        </button>
+                        <Link href="/collection">
+                            <button className="group relative px-8 py-3 overflow-hidden">
+                                <span className="relative z-10 text-white tracking-widest text-sm font-light font-[family-name:var(--font-cormorant)]">
+                                    EXPLORE COLLECTION
+                                </span>
+                                <svg
+                                    className="absolute inset-0 w-full h-full"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                >
+                                    <rect
+                                        x="0"
+                                        y="0"
+                                        width="100%"
+                                        height="100%"
+                                        fill="none"
+                                        stroke="white"
+                                        strokeWidth="1"
+                                        opacity="0.6"
+                                        className="group-hover:opacity-100 transition-opacity"
+                                    />
+                                </svg>
+                            </button>
+                        </Link>
                     </div>
                 </div>
 
